@@ -23,5 +23,5 @@ Streamlit을 기반으로 간단하게 구현되어 있으며, 사용자 인터�
 ### 예시
 입력: **"체크무늬, 긴팔이고  버튼 칼라와 밑단은 둥근 셔츠"**
 
-![예시 1](./readme_images/example3.png)
+![예시 1](./readme_images/example1.png)
 

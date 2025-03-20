@@ -66,7 +66,7 @@ if st.button("검색"):
                     st.image(product['Image_path'], width=150)  # 이미지 출력
                 with col2:
                     st.write(f"**[{product['Name']}]({product['Link']})**")
-                    st.write(f"💰 가격: {product['Price']}")
+                    st.write(f"💰 가격: {int(product['Price']):,} 원")
                     st.markdown(f"[🔗 구매 링크]({product['Link']})")
                 st.markdown("---")  # 각 결과 사이 구분선
         else:
