@@ -23,3 +23,10 @@ test*.py
 
 #.env파일 무시
 .env
+
+
+# readme_images 폴더 예외 처리
+!readme_images/
+!readme_images/*.png
+!readme_images/*.jpeg
+!readme_images/*.svg
