@@ -1,5 +1,8 @@
 # Clothing Retrieval Demo Prototype
 
+https://prototype.p-picker.com/
+
+
 이 데모는 **텍스트 입력을 통해 원하는 옷(의류)을 추출하는 Retrieval Service Prototype**입니다.  
 Streamlit을 기반으로 간단하게 구현되어 있으며, 사용자 인터랙션 없이 데모용으로 구성되어 있습니다.
 
