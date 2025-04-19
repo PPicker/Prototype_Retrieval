@@ -17,6 +17,8 @@ __pycache__/
 #image dir 무시
 images/
 
+#faiss dir 무시
+faiss/
 
 #test 파일 무시
 test*.py
