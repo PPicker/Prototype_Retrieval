@@ -1,75 +1,230 @@
-import streamlit as st
-import pandas as pd
-import csv
-from embedder import  Embedding_Model
+import os, faiss, psycopg2, streamlit as st, torch
+from dotenv import load_dotenv
+from boto3 import client as boto3_client
+from embedder import Embedding_Model
 from gemini_utils import translate
-import os 
-
-from torch import matmul as matmul
-from torch import argsort as argsort
-from torch import load as load
-from torch import Tensor as torch_Tensor
 
 
-def fetch_ranking(query_embedding, image_embeddings,k=3):
-    """
-    주어진 query_embedding에 대해, 이미지 임베딩들과의 dot product 계산하고 (normalized 되어있음)
-    유사도 기준 내림차순으로 정렬된 인덱스 리스트를 반환합니다.
-    -> top - K 반환
-    """
 
-    dot_sim = matmul(image_embeddings, query_embedding.unsqueeze(1)).squeeze(1)
-    ranking = argsort(dot_sim, descending=True)
-    return ranking[:k]
+# ───────────────────────────────────────────────────────────────
+# 1) 앱 최상단: 세션 스테이트 초기화 (한 번만 실행)
+# ───────────────────────────────────────────────────────────────
+if "page" not in st.session_state:
+    st.session_state["page"]     = "search"   # "search" or "detail"
+    st.session_state["product"]  = None
+    st.session_state["query"]    = ""
+    st.session_state["results"]  = []
 
-@st.cache_data
-def prepare():
+
+
+# ── 설정 ─────────────────────────────────────────────────────────────
+load_dotenv()
+FAISS_PATH = "./faiss/faiss_index_with_ids.index"
+TOP_K      = 3
+
+def get_s3_client():
+    return boto3_client(
+        "s3",
+        aws_access_key_id     = os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY"),
+        region_name          = os.getenv("AWS_REGION")
+    )
+
+@st.cache_resource
+def load_resources():
     embedder = Embedding_Model()
-    '''
-    Just for Demo
-    '''
-    with open('./items.csv', 'r', newline='', encoding='utf-8') as csvfile:
-        reader = csv.DictReader(csvfile)
-        item_list = list(reader)
-    image_embeddings= load('image_embeddings.pt')
-    return embedder, item_list,image_embeddings
+    index    = faiss.read_index(FAISS_PATH)
+    assert isinstance(index, faiss.IndexIDMap)
+    conn = psycopg2.connect(
+        host   = os.getenv("DB_HOST"),
+        port   = os.getenv("DB_PORT", "5432"),
+        dbname = os.getenv("DB_NAME"),
+        user   = os.getenv("DB_USER"),
+        password = os.getenv("DB_PASSWORD"),
+        options  = "-c search_path=public"
+    )
+    conn.autocommit = True
+    s3     = get_s3_client()
+    bucket = os.getenv("AWS_S3_BUCKET_NAME")
+    return embedder, index, conn, s3, bucket
 
-embedder, item_list,image_embeddings = prepare()
+embedder, index, conn, s3, bucket = load_resources()
 
 
+# ── FAISS 검색 ────────────────────────────────────────────────────────
+def search_faiss(q_emb: torch.Tensor, k: int = TOP_K) -> list[int]:
+    q = q_emb.detach().cpu().numpy().astype("float32").reshape(1, -1)
+    _, I = index.search(q, k)
+    return [int(pid) for pid in I[0] if pid != -1]
 
-# Streamlit UI 구성
-st.title("🛍️ 제품 추천 웹앱")
 
-# 사용자 입력 받기
-query = st.text_input("검색할 제품 키워드를 입력하세요: ", "")
+# ── 검색용 DB 조회 ────────────────────────────────────────────────────
+def fetch_products(ids: list[int]) -> list[dict]:
+    if not ids:
+        return []
+    ids = [int(x) for x in ids]
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id,
+                   name,
+                   original_price AS price,
+                   url AS link,
+                   thumbnail_key
+              FROM products
+             WHERE id = ANY(%s)
+             ORDER BY array_position(%s::int[], id)
+            """,
+            (ids, ids)
+        )
+        cols = [c.name for c in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
 
-K = 3
-# 검색 버튼
-if st.button("검색"):
-    if query:
-        eng_query = translate(query)
-        # 제품 정보 가져오기
-        print(eng_query)
-        query_embedding = embedder.embed_text(eng_query)
-        rankings_K = fetch_ranking(query_embedding, image_embeddings, K)  # 상위 K개의 인덱스 리스트 반환
-        
-        if isinstance(rankings_K, torch_Tensor):
-            st.write("### 검색 결과")
-            # ranking 결과에 있는 각 상품을 출력
-            for rank, idx in enumerate(rankings_K, start=1):
-                product = item_list[idx]
-                st.markdown(f"#### 결과 {rank}")
-                # 이미지와 텍스트 영역 비율 설정
-                col1, col2 = st.columns([1, 3])
-                with col1:
-                    st.image(product['Image_path'], width=150)  # 이미지 출력
-                with col2:
-                    st.write(f"**[{product['Name']}]({product['Link']})**")
-                    st.write(f"💰 가격: {int(product['Price']):,} 원")
-                    st.markdown(f"[🔗 구매 링크]({product['Link']})")
-                st.markdown("---")  # 각 결과 사이 구분선
+    # thumbnail_key → presigned URL
+    for r in rows:
+        if r["thumbnail_key"]:
+            r["image_url"] = s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": bucket, "Key": r["thumbnail_key"]},
+                ExpiresIn=3600
+            )
         else:
-            st.warning("검색 결과가 없습니다.")
-    else:
-        st.warning("키워드를 입력해주세요!")
+            r["image_url"] = None
+    return rows
+
+
+# ── 상세용 DB 조회 ───────────────────────────────────────────────────
+def get_product_detail(prod_id: int) -> dict | None:
+    # 1) products 메타
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT name,
+                   original_price AS price,
+                   url as link,
+                   thumbnail_key
+              FROM products
+             WHERE id = %s
+            """,
+            (prod_id,)
+        )
+        meta = cur.fetchone()
+        if not meta:
+            return None
+        name, price, link, thumb_key = meta
+
+    # 2) products_images 에서 모든 key (order_index 순)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT key
+              FROM product_images
+             WHERE product_id = %s
+             ORDER BY order_index
+            """,
+            (prod_id,)
+        )
+        img_keys = [row[0] for row in cur.fetchall()]
+        print(img_keys)
+
+    return {
+        "name":          name,
+        "price":         price,
+        "link":          link,
+        "thumbnail_key": thumb_key,
+        "image_keys":    img_keys,
+    }
+
+
+# ───────────────────────────────────────────────────────────────
+# 5) 콜백: 페이지 전환
+# ───────────────────────────────────────────────────────────────
+def do_search():
+    """검색 수행 후 결과 세션에 저장"""
+    q = st.session_state["query"].strip()
+    if not q:
+        st.warning("검색어를 입력해주세요")
+        return
+    eng = translate(q)
+    q_emb = embedder.embed_text(eng)
+    pids  = search_faiss(q_emb)
+    st.session_state["results"] = fetch_products(pids)
+
+def go_to_detail(prod_id: int):
+    st.session_state["page"]    = "detail"
+    st.session_state["product"] = prod_id
+
+def go_to_search():
+    st.session_state["page"] = "search"
+
+# ───────────────────────────────────────────────────────────────
+# 6) 페이지 렌더링
+# ───────────────────────────────────────────────────────────────
+def page_search():
+    st.title("🛍️ 벡터 검색 상품 추천")
+    st.text_input("검색어를 입력하세요", key="query")
+    st.button("🔍 검색", on_click=do_search)
+
+    results = st.session_state.get("results", [])
+    if not results:
+        return
+
+    for p in results:
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            st.image(p["image_url"], width=120)
+            st.button(
+                "자세히 보기 ▶",
+                key=f"detail_{p['id']}",
+                on_click=go_to_detail,
+                args=(p["id"],)
+            )
+        with c2:
+            st.markdown(f"**{p['name']}**")
+            st.write(f"💰 {int(p['price']):,} 원")
+            st.markdown(f"[구매 링크 ▶]({p['link']})")
+        st.markdown("---")
+def page_detail():
+    prod_id = st.session_state["product"]
+    data = get_product_detail(prod_id)
+    if not data:
+        st.error("상품을 찾을 수 없습니다.")
+        st.button("⬅ 돌아가기", on_click=go_to_search)
+        return
+
+    # presigned URL 리스트 생성
+    urls = []
+    if data["thumbnail_key"]:
+        urls.append(s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": data["thumbnail_key"]},
+            ExpiresIn=3600
+        ))
+    for k in data["image_keys"]:
+        urls.append(s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": k},
+            ExpiresIn=3600
+        ))
+
+    # ── 1) 페이지 제목 & 상품 정보 ──
+    st.title("상품 상세 보기")
+    st.markdown(f"## {data['name']}")
+    st.write(f"###  {int(data['price']):,} 원")
+    st.markdown(f"[ 구매하러 가기 ▶]({data['link']})")
+    st.markdown("---")
+
+    # ── 2) 이미지들 (정보 아래로 배치) ──
+    for url in urls:
+        st.image(url, use_container_width=True)
+        st.markdown("---")
+
+    # ── 3) 뒤로가기 버튼 ──
+    st.button("⬅ 검색 결과로 돌아가기", on_click=go_to_search)
+# ───────────────────────────────────────────────────────────────
+# 7) 라우터: 페이지 결정
+# ───────────────────────────────────────────────────────────────
+if st.session_state["page"] == "search":
+    page_search()
+else:
+    page_detail()

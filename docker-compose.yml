@@ -1,24 +1,56 @@
-version: '3'
+# Prototype_Retrieval/docker-compose.yml
+version: "3.8"
+
 services:
-  streamlit:
-    build: .
-    container_name: streamlit_app
-    ports:
-      - "8501:8501"
+  # 1) Postgres DB
+  db:
+    image: postgres:15
+    container_name: ppicker_postgres
+    restart: always
     env_file:
       - .env
-
     environment:
-      - STREAMLIT_SERVER_HEADLESS=true
-      - STREAMLIT_SERVER_ENABLECORS=false
-      - STREAMLIT_SERVER_ENABLEXSRFPROTECTION=false
-      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
-      - STREAMLIT_SERVER_PORT=8501
-
-  nginx:
-    build: ./nginx
-    container_name: nginx_proxy
+      # 이 env 변수들은 .env에서 읽어 옵니다
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      APP_USER:          ${APP_USER}
+      APP_PASSWORD:      ${APP_PASSWORD}
     ports:
-      - "80:80"
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      # 호스트의 database/pgdata 에 DB 파일을 보관
+      - ./database/pgdata:/var/lib/postgresql/data
+      # 초기화 스크립트(빈 데이터베이스일 때만 실행됨)
+      - ./database/init:/docker-entrypoint-initdb.d
+
+  # 2) Streamlit + FAISS 앱
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: streamlit_app
+    depends_on:
+      - db
+    env_file:
+      - .env
+    ports:
+      - "8501:8501"
+    environment:
+      # Streamlit 설정
+      STREAMLIT_SERVER_HEADLESS:         "true"
+      STREAMLIT_SERVER_ENABLECORS:       "false"
+      STREAMLIT_SERVER_ENABLEXSRFPROTECTION: "false"
+      STREAMLIT_SERVER_ADDRESS:          "0.0.0.0"
+      STREAMLIT_SERVER_PORT:             "8501"
+
+  # 3) Nginx 리버스 프록시
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: nginx_proxy
     depends_on:
       - streamlit
+    ports:
+      - "80:80"
