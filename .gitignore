@@ -1,6 +1,7 @@
 # __pycache__ 폴더 무시
 __pycache__/
 
+database/pgdata
 
 
 # .pickle 확장자를 가진 모든 파일 무시
