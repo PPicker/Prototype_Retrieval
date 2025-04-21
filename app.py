@@ -5,48 +5,49 @@ from embedder import Embedding_Model
 from gemini_utils import translate
 
 
-
 # ───────────────────────────────────────────────────────────────
 # 1) 앱 최상단: 세션 스테이트 초기화 (한 번만 실행)
 # ───────────────────────────────────────────────────────────────
 if "page" not in st.session_state:
-    st.session_state["page"]     = "search"   # "search" or "detail"
-    st.session_state["product"]  = None
-    st.session_state["query"]    = ""
-    st.session_state["results"]  = []
-
+    st.session_state["page"] = "search"  # "search" or "detail"
+    st.session_state["product"] = None
+    st.session_state["query"] = ""
+    st.session_state["results"] = []
 
 
 # ── 설정 ─────────────────────────────────────────────────────────────
 load_dotenv()
 FAISS_PATH = "./faiss/faiss_index_with_ids.index"
-TOP_K      = 3
+TOP_K = 3
+
 
 def get_s3_client():
     return boto3_client(
         "s3",
-        aws_access_key_id     = os.getenv("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY"),
-        region_name          = os.getenv("AWS_REGION")
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        region_name=os.getenv("AWS_REGION"),
     )
+
 
 @st.cache_resource
 def load_resources():
     embedder = Embedding_Model()
-    index    = faiss.read_index(FAISS_PATH)
+    index = faiss.read_index(FAISS_PATH)
     assert isinstance(index, faiss.IndexIDMap)
     conn = psycopg2.connect(
-        host   = os.getenv("DB_HOST"),
-        port   = os.getenv("DB_PORT", "5432"),
-        dbname = os.getenv("DB_NAME"),
-        user   = os.getenv("DB_USER"),
-        password = os.getenv("DB_PASSWORD"),
-        options  = "-c search_path=public"
+        host=os.getenv("DB_HOST"),
+        port=os.getenv("DB_PORT", "5432"),
+        dbname=os.getenv("DB_NAME"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        options="-c search_path=public",
     )
     conn.autocommit = True
-    s3     = get_s3_client()
+    s3 = get_s3_client()
     bucket = os.getenv("AWS_S3_BUCKET_NAME")
     return embedder, index, conn, s3, bucket
+
 
 embedder, index, conn, s3, bucket = load_resources()
 
@@ -75,7 +76,7 @@ def fetch_products(ids: list[int]) -> list[dict]:
              WHERE id = ANY(%s)
              ORDER BY array_position(%s::int[], id)
             """,
-            (ids, ids)
+            (ids, ids),
         )
         cols = [c.name for c in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -86,7 +87,7 @@ def fetch_products(ids: list[int]) -> list[dict]:
             r["image_url"] = s3.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": bucket, "Key": r["thumbnail_key"]},
-                ExpiresIn=3600
+                ExpiresIn=3600,
             )
         else:
             r["image_url"] = None
@@ -106,7 +107,7 @@ def get_product_detail(prod_id: int) -> dict | None:
               FROM products
              WHERE id = %s
             """,
-            (prod_id,)
+            (prod_id,),
         )
         meta = cur.fetchone()
         if not meta:
@@ -122,17 +123,17 @@ def get_product_detail(prod_id: int) -> dict | None:
              WHERE product_id = %s
              ORDER BY order_index
             """,
-            (prod_id,)
+            (prod_id,),
         )
         img_keys = [row[0] for row in cur.fetchall()]
         print(img_keys)
 
     return {
-        "name":          name,
-        "price":         price,
-        "link":          link,
+        "name": name,
+        "price": price,
+        "link": link,
         "thumbnail_key": thumb_key,
-        "image_keys":    img_keys,
+        "image_keys": img_keys,
     }
 
 
@@ -147,15 +148,18 @@ def do_search():
         return
     eng = translate(q)
     q_emb = embedder.embed_text(eng)
-    pids  = search_faiss(q_emb)
+    pids = search_faiss(q_emb)
     st.session_state["results"] = fetch_products(pids)
 
+
 def go_to_detail(prod_id: int):
-    st.session_state["page"]    = "detail"
+    st.session_state["page"] = "detail"
     st.session_state["product"] = prod_id
+
 
 def go_to_search():
     st.session_state["page"] = "search"
+
 
 # ───────────────────────────────────────────────────────────────
 # 6) 페이지 렌더링
@@ -177,13 +181,15 @@ def page_search():
                 "자세히 보기 ▶",
                 key=f"detail_{p['id']}",
                 on_click=go_to_detail,
-                args=(p["id"],)
+                args=(p["id"],),
             )
         with c2:
             st.markdown(f"**{p['name']}**")
             st.write(f"💰 {int(p['price']):,} 원")
             st.markdown(f"[구매 링크 ▶]({p['link']})")
         st.markdown("---")
+
+
 def page_detail():
     prod_id = st.session_state["product"]
     data = get_product_detail(prod_id)
@@ -195,17 +201,19 @@ def page_detail():
     # presigned URL 리스트 생성
     urls = []
     if data["thumbnail_key"]:
-        urls.append(s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": bucket, "Key": data["thumbnail_key"]},
-            ExpiresIn=3600
-        ))
+        urls.append(
+            s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": bucket, "Key": data["thumbnail_key"]},
+                ExpiresIn=3600,
+            )
+        )
     for k in data["image_keys"]:
-        urls.append(s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": bucket, "Key": k},
-            ExpiresIn=3600
-        ))
+        urls.append(
+            s3.generate_presigned_url(
+                "get_object", Params={"Bucket": bucket, "Key": k}, ExpiresIn=3600
+            )
+        )
 
     # ── 1) 페이지 제목 & 상품 정보 ──
     st.title("상품 상세 보기")
@@ -221,6 +229,8 @@ def page_detail():
 
     # ── 3) 뒤로가기 버튼 ──
     st.button("⬅ 검색 결과로 돌아가기", on_click=go_to_search)
+
+
 # ───────────────────────────────────────────────────────────────
 # 7) 라우터: 페이지 결정
 # ───────────────────────────────────────────────────────────────
