@@ -3,6 +3,7 @@ import os
 from google import genai
 from google.genai import types
 
+
 def translate(input_text):
     client = genai.Client(
         api_key=os.environ.get("GEMINI_API_KEY"),
@@ -13,16 +14,20 @@ def translate(input_text):
         types.Content(
             role="user",
             parts=[
-                types.Part.from_text(text="""Can you translate Korean to English which will be used for CLIP text encoder??"""),
+                types.Part.from_text(
+                    text="""Can you translate Korean to English which will be used for CLIP text encoder??"""
+                ),
             ],
         ),
         types.Content(
             role="model",
             parts=[
-                types.Part.from_text(text="""Okay, I understand. I will translate Korean text into English, focusing on clarity and capturing the core meaning for use with a CLIP text encoder.  I will avoid overly poetic or nuanced translations and prioritize accuracy and directness.
+                types.Part.from_text(
+                    text="""Okay, I understand. I will translate Korean text into English, focusing on clarity and capturing the core meaning for use with a CLIP text encoder.  I will avoid overly poetic or nuanced translations and prioritize accuracy and directness.
 
 Please provide the Korean text you would like me to translate. I'm ready!
-"""),
+"""
+                ),
             ],
         ),
         types.Content(
@@ -34,8 +39,10 @@ Please provide the Korean text you would like me to translate. I'm ready!
         types.Content(
             role="model",
             parts=[
-                types.Part.from_text(text="""Blue checkered oversized shirt
-"""),
+                types.Part.from_text(
+                    text="""Blue checkered oversized shirt
+"""
+                ),
             ],
         ),
         types.Content(
@@ -47,8 +54,10 @@ Please provide the Korean text you would like me to translate. I'm ready!
         types.Content(
             role="model",
             parts=[
-                types.Part.from_text(text="""Black straight-fit denim jeans
-"""),
+                types.Part.from_text(
+                    text="""Black straight-fit denim jeans
+"""
+                ),
             ],
         ),
         types.Content(
@@ -60,8 +69,10 @@ Please provide the Korean text you would like me to translate. I'm ready!
         types.Content(
             role="model",
             parts=[
-                types.Part.from_text(text="""Gray shirt
-"""),
+                types.Part.from_text(
+                    text="""Gray shirt
+"""
+                ),
             ],
         ),
         types.Content(
@@ -73,8 +84,10 @@ Please provide the Korean text you would like me to translate. I'm ready!
         types.Content(
             role="model",
             parts=[
-                types.Part.from_text(text="""Oversized shirt with buttoned sleeves
-"""),
+                types.Part.from_text(
+                    text="""Oversized shirt with buttoned sleeves
+"""
+                ),
             ],
         ),
         types.Content(
@@ -98,16 +111,15 @@ Please provide the Korean text you would like me to translate. I'm ready!
     text_list = []  # 모든 청크를 저장할 리스트
 
     for chunk in client.models.generate_content_stream(
-            model=model,
-            contents=contents,
-            config=generate_content_config,
-        ):
+        model=model,
+        contents=contents,
+        config=generate_content_config,
+    ):
         text_list.append(chunk.text)  # 청크를 리스트에 추가
 
-    full_text = ''.join(text_list)  # 모든 청크를 하나의 문자열로 합침
+    full_text = "".join(text_list)  # 모든 청크를 하나의 문자열로 합침
     return full_text
 
 
-
-if __name__ == '__main__':
-    print(translate('회색 오버핏 셔츠'))
+if __name__ == "__main__":
+    print(translate("회색 오버핏 셔츠"))
