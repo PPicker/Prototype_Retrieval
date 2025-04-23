@@ -43,10 +43,8 @@ def load_resources():
 embedder, conn, s3, bucket = load_resources()
 register_vector(conn)
 
-def search_and_fetch(
-    q_emb: torch.Tensor,
-    k: int = TOP_K
-) -> List[Dict]:
+
+def search_and_fetch(q_emb: torch.Tensor, k: int = TOP_K) -> List[Dict]:
     """
     1) pgvector의 inner-product (<#>)로 top-k id 검색
     2) 곧바로 name, price, link, thumbnail_key 가져오기
@@ -64,10 +62,10 @@ def search_and_fetch(
                 p.url        AS link,
                 p.thumbnail_key
             FROM products AS p
-            ORDER BY p.embedding <#> %s DESC
+            ORDER BY p.embedding <#> %s
             LIMIT %s;
             """,
-            (vec, k)
+            (vec, k),
         )
         cols = [c.name for c in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -85,6 +83,7 @@ def search_and_fetch(
             r["image_url"] = None
 
     return rows
+
 
 # ── 상세용 DB 조회 ───────────────────────────────────────────────────
 def get_product_detail(prod_id: int) -> dict | None:
@@ -139,11 +138,11 @@ def do_search():
         st.warning("검색어를 입력해주세요")
         return
     eng = translate(q)
-    category = categorize(q) 
-
+    category = categorize(q)
 
     q_emb = embedder.embed_text(eng)
-    st.session_state["results"] = search_and_fetch(q_emb,TOP_K)
+    st.session_state["results"] = search_and_fetch(q_emb, TOP_K)
+
 
 def go_to_detail(prod_id: int):
     st.session_state["page"] = "detail"

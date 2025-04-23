@@ -7,22 +7,25 @@ import torch
 from torch.nn import functional as F
 import functools
 
+
 def normalize_output(fn):
     """임베딩 결과를, self.normalize가 True일 때만 L2 정규화해서 리턴해 주는 데코레이터"""
+
     @functools.wraps(fn)
     def wrapper(self, *args, **kwargs):
         feats = fn(self, *args, **kwargs)
-        if getattr(self, 'normalize', False):
+        if getattr(self, "normalize", False):
             # L2 노름으로 정규화 (마지막 차원 기준)
             eps = 1e-12
             normed = feats / feats.norm(p=2, dim=-1, keepdim=True).clamp_min(eps)
             return normed
         return feats
+
     return wrapper
 
 
 class Embedding_Model:
-    def __init__(self, model_name="patrickjohncyh/fashion-clip",normalize=True):
+    def __init__(self, model_name="patrickjohncyh/fashion-clip", normalize=True):
         self.model_name = model_name
         self.normalize = normalize
         self.embedder = CLIPModel.from_pretrained(model_name)
@@ -38,7 +41,6 @@ class Embedding_Model:
         inputs = self.processor(images=all_images, return_tensors="pt", padding=True)
         embeddings = self.embedder.get_image_features(**inputs)
         return embeddings
-    
 
     @normalize_output
     @torch.inference_mode()
