@@ -1,1 +1,2 @@
-database/pgdata
+database/pgdata_prod
+database/pgdata_test
