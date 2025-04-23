@@ -1,10 +1,10 @@
-FROM python:3.10-slim
+FROM oogie0918/faiss:latest
 
 WORKDIR /app
 RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 RUN pip install 'transformers[torch]==4.42.4'
 RUN pip install open_clip_torch==2.23.0
-RUN pip install pandas numpy google-genai streamlit 
+RUN pip install pandas google-genai streamlit 
 RUN pip install psycopg2-binary pgvector
 RUN pip install python-dotenv boto3
 

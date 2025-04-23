@@ -2,11 +2,9 @@ import os, faiss, psycopg2, streamlit as st, torch
 from dotenv import load_dotenv
 from boto3 import client as boto3_client
 from embedder import Embedding_Model
-from gemini_utils.categorize import categorize
 from gemini_utils.translate import translate
-from utils.aws import get_s3_client
-from typing import List, Dict
-from pgvector.psycopg2 import register_vector
+from gemini_utils.categorize import categorize
+
 
 # ───────────────────────────────────────────────────────────────
 # 1) 앱 최상단: 세션 스테이트 초기화 (한 번만 실행)
@@ -19,13 +17,25 @@ if "page" not in st.session_state:
 
 
 # ── 설정 ─────────────────────────────────────────────────────────────
-load_dotenv(".env.prod")
+load_dotenv()
+FAISS_PATH = "./faiss/faiss_index_with_ids_new.index"
 TOP_K = 3
+
+
+def get_s3_client():
+    return boto3_client(
+        "s3",
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        region_name=os.getenv("AWS_REGION"),
+    )
 
 
 @st.cache_resource
 def load_resources():
     embedder = Embedding_Model()
+    index = faiss.read_index(FAISS_PATH)
+    assert isinstance(index, faiss.IndexIDMap)
     conn = psycopg2.connect(
         host=os.getenv("DB_HOST"),
         port=os.getenv("DB_PORT", "5432"),
@@ -37,54 +47,53 @@ def load_resources():
     conn.autocommit = True
     s3 = get_s3_client()
     bucket = os.getenv("AWS_S3_BUCKET_NAME")
-    return embedder, conn, s3, bucket
+    return embedder, index, conn, s3, bucket
 
 
-embedder, conn, s3, bucket = load_resources()
-register_vector(conn)
+embedder, index, conn, s3, bucket = load_resources()
 
-def search_and_fetch(
-    q_emb: torch.Tensor,
-    k: int = TOP_K
-) -> List[Dict]:
-    """
-    1) pgvector의 inner-product (<#>)로 top-k id 검색
-    2) 곧바로 name, price, link, thumbnail_key 가져오기
-    3) presigned URL 생성
-    """
-    # 1) Tensor → Python 리스트
-    vec = q_emb.detach().cpu().numpy().astype("float32")
+
+# ── FAISS 검색 ────────────────────────────────────────────────────────
+def search_faiss(q_emb: torch.Tensor, k: int = TOP_K) -> list[int]:
+    q = q_emb.detach().cpu().numpy().astype("float32").reshape(1, -1)
+    _, I = index.search(q, k)
+    return [int(pid) for pid in I[0] if pid != -1]
+
+
+# ── 검색용 DB 조회 ────────────────────────────────────────────────────
+def fetch_products(ids: list[int]) -> list[dict]:
+    if not ids:
+        return []
+    ids = [int(x) for x in ids]
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT
-                p.id,
-                p.name,
-                p.original_price AS price,
-                p.url        AS link,
-                p.thumbnail_key
-            FROM products AS p
-            ORDER BY p.embedding <#> %s DESC
-            LIMIT %s;
+            SELECT id,
+                   name,
+                   original_price AS price,
+                   url AS link,
+                   thumbnail_key
+              FROM products
+             WHERE id = ANY(%s)
+             ORDER BY array_position(%s::int[], id)
             """,
-            (vec, k)
+            (ids, ids),
         )
         cols = [c.name for c in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
 
-    # 2) presigned URL 생성
+    # thumbnail_key → presigned URL
     for r in rows:
-        key = r.pop("thumbnail_key")
-        if key:
+        if r["thumbnail_key"]:
             r["image_url"] = s3.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": bucket, "Key": key},
+                Params={"Bucket": bucket, "Key": r["thumbnail_key"]},
                 ExpiresIn=3600,
             )
         else:
             r["image_url"] = None
-
     return rows
+
 
 # ── 상세용 DB 조회 ───────────────────────────────────────────────────
 def get_product_detail(prod_id: int) -> dict | None:
@@ -139,11 +148,10 @@ def do_search():
         st.warning("검색어를 입력해주세요")
         return
     eng = translate(q)
-    category = categorize(q) 
-
-
     q_emb = embedder.embed_text(eng)
-    st.session_state["results"] = search_and_fetch(q_emb,TOP_K)
+    pids = search_faiss(q_emb)
+    st.session_state["results"] = fetch_products(pids)
+
 
 def go_to_detail(prod_id: int):
     st.session_state["page"] = "detail"
