@@ -1,7 +1,7 @@
 import os, faiss, psycopg2, streamlit as st, torch
 from dotenv import load_dotenv
 from boto3 import client as boto3_client
-from embedder import Embedding_Model
+from embedder import Embedder
 from gemini_utils.categorize import categorize
 from gemini_utils.translate import translate
 from utils.aws import get_s3_client
@@ -25,7 +25,7 @@ TOP_K = 3
 
 @st.cache_resource
 def load_resources():
-    embedder = Embedding_Model()
+    embedder = Embedder()
     conn = psycopg2.connect(
         host=os.getenv("DB_HOST"),
         port=os.getenv("DB_PORT", "5432"),
@@ -51,7 +51,6 @@ def search_and_fetch(q_emb: torch.Tensor, k: int = TOP_K) -> List[Dict]:
     3) presigned URL 생성
     """
     # 1) Tensor → Python 리스트
-    vec = q_emb.detach().cpu().numpy().astype("float32")
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -65,7 +64,7 @@ def search_and_fetch(q_emb: torch.Tensor, k: int = TOP_K) -> List[Dict]:
             ORDER BY p.embedding <#> %s
             LIMIT %s;
             """,
-            (vec, k),
+            (q_emb, k),
         )
         cols = [c.name for c in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -137,10 +136,10 @@ def do_search():
     if not q:
         st.warning("검색어를 입력해주세요")
         return
-    eng = translate(q)
-    category = categorize(q)
+    # eng = translate(q)
+    # category = categorize(q)
 
-    q_emb = embedder.embed_text(eng)
+    q_emb = embedder.embed(q)
     st.session_state["results"] = search_and_fetch(q_emb, TOP_K)
 
 
