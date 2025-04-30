@@ -24,6 +24,10 @@ test*.py
 
 #.env파일 무시
 .env
+.env.test
+.env.prod
+/database/pgdata_prod/
+/database/pgdata_test/
 
 
 # readme_images 폴더 예외 처리
